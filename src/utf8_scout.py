@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 DEFAULT_INCLUDE = ["**/*.md", "**/*.txt", "**/*.py", "**/*.json", "**/*.yml", "**/*.yaml"]
@@ -16,6 +18,11 @@ class ScanResult:
     path: Path
     ok_utf8: bool
     error: str | None
+
+
+def _ext_key(path: Path) -> str:
+    ext = path.suffix.lower()
+    return ext if ext else "(no ext)"
 
 
 def _iter_files(root: Path, exclude_dirs: set[str]) -> list[Path]:
@@ -90,6 +97,14 @@ def try_convert_to_utf8(path: Path, from_encodings: list[str], make_backup: bool
     return False, f"failed to convert ({last_error})"
 
 
+def _write_report_json(report_path: str, payload: dict[str, Any]) -> None:
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    if report_path == "-":
+        print(text, end="")
+        return
+    Path(report_path).write_text(text, encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Scan for files that are not valid UTF-8 and optionally convert them.")
     parser.add_argument("root", nargs="?", default=".", help="Root folder to scan (default: .)")
@@ -115,6 +130,16 @@ def main() -> int:
         help="Encodings to try when converting (default: cp950 big5 cp936 shift_jis).",
     )
     parser.add_argument("--no-backup", action="store_true", help="Do not write .bak backups when converting.")
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print a per-extension summary table (total/ok/bad).",
+    )
+    parser.add_argument(
+        "--report-json",
+        default=None,
+        help="Write a JSON report to this path, or '-' for stdout.",
+    )
 
     args = parser.parse_args()
     root = Path(args.root).resolve()
@@ -128,7 +153,39 @@ def main() -> int:
     print(f"UTF-8 OK: {len(results) - len(bad)}")
     print(f"Not UTF-8: {len(bad)}")
 
+    if args.summary:
+        summary: dict[str, dict[str, int]] = {}
+        for r in results:
+            ext = _ext_key(r.path)
+            bucket = summary.setdefault(ext, {"total": 0, "ok": 0, "bad": 0})
+            bucket["total"] += 1
+            if r.ok_utf8:
+                bucket["ok"] += 1
+            else:
+                bucket["bad"] += 1
+
+        print("\nBy extension:")
+        print("ext\t total\t ok\t bad")
+        for ext in sorted(summary.keys()):
+            b = summary[ext]
+            print(f"{ext}\t {b['total']}\t {b['ok']}\t {b['bad']}")
+
     if not bad:
+        if args.report_json:
+            _write_report_json(
+                args.report_json,
+                {
+                    "root": str(root),
+                    "scanned": len(results),
+                    "ok_utf8": len(results) - len(bad),
+                    "not_utf8": len(bad),
+                    "include": include,
+                    "exclude": args.exclude,
+                    "exclude_dirs": sorted(exclude_dirs),
+                    "files": [],
+                    "converted": {"attempted": 0, "ok": 0, "failed": 0, "from_encodings": args.from_encodings},
+                },
+            )
         return 0
 
     print("\nNon-UTF-8 files:")
@@ -137,20 +194,60 @@ def main() -> int:
         print(f"- {rel} ({r.error})")
 
     if not args.fix:
+        if args.report_json:
+            _write_report_json(
+                args.report_json,
+                {
+                    "root": str(root),
+                    "scanned": len(results),
+                    "ok_utf8": len(results) - len(bad),
+                    "not_utf8": len(bad),
+                    "include": include,
+                    "exclude": args.exclude,
+                    "exclude_dirs": sorted(exclude_dirs),
+                    "files": [{"path": str(r.path.relative_to(root)), "error": r.error} for r in bad],
+                    "converted": {"attempted": 0, "ok": 0, "failed": 0, "from_encodings": args.from_encodings},
+                },
+            )
         return 2
 
     print("\nConverting:")
     converted = 0
+    conversion_results: list[dict[str, Any]] = []
     for r in bad:
         ok, msg = try_convert_to_utf8(
             r.path, from_encodings=args.from_encodings, make_backup=(not args.no_backup)
         )
         rel = r.path.relative_to(root)
         print(f"- {rel}: {msg}")
+        conversion_results.append({"path": str(rel), "ok": ok, "message": msg})
         if ok:
             converted += 1
 
     print(f"\nConverted: {converted}/{len(bad)}")
+
+    if args.report_json:
+        _write_report_json(
+            args.report_json,
+            {
+                "root": str(root),
+                "scanned": len(results),
+                "ok_utf8": len(results) - len(bad),
+                "not_utf8": len(bad),
+                "include": include,
+                "exclude": args.exclude,
+                "exclude_dirs": sorted(exclude_dirs),
+                "files": [{"path": str(r.path.relative_to(root)), "error": r.error} for r in bad],
+                "converted": {
+                    "attempted": len(bad),
+                    "ok": converted,
+                    "failed": len(bad) - converted,
+                    "from_encodings": args.from_encodings,
+                    "results": conversion_results,
+                },
+            },
+        )
+
     return 0 if converted == len(bad) else 3
 
 

@@ -1,7 +1,7 @@
-# UTF-8 Scout：找出「亂碼」檔案的編碼問題
+# UTF-8 Scout
 
 ## What it is
-`utf8_scout.py` is a tiny CLI that scans a folder for text files and reports which ones fail to decode as UTF-8 (a common cause of mojibake/garbled Chinese output in terminals).
+`utf8_scout.py` is a tiny CLI that scans a folder for text files and reports which ones fail to decode as UTF-8 (a common cause of mojibake/garbled output in terminals).
 
 ## Why it exists
 I often hit “file looks fine in GitHub/VS Code but looks garbled in Terminal/PowerShell”. This project helps me quickly:
@@ -25,6 +25,18 @@ Scan a project folder:
 python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/*.md **/*.py
 ```
 
+Print a quick breakdown by extension:
+
+```bash
+python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/*.md **/*.py --summary
+```
+
+Write a JSON report to a file (or use `-` for stdout):
+
+```bash
+python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/*.md --report-json report.json
+```
+
 Attempt safe conversion (creates `.bak` files first):
 
 ```bash
@@ -32,6 +44,5 @@ python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/*.md --fix --from
 ```
 
 ## Next steps
-- [ ] Add a small `--report json` output for automation/scripts
-- [ ] Add a `--dry-run` summary table (counts by extension)
-
+- [ ] Detect BOM / UTF-16 files explicitly
+- [ ] Add an option to auto-suggest likely source encoding
