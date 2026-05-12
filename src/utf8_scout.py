@@ -97,6 +97,27 @@ def try_convert_to_utf8(path: Path, from_encodings: list[str], make_backup: bool
     return False, f"failed to convert ({last_error})"
 
 
+def guess_encodings(path: Path, candidate_encodings: list[str]) -> list[dict[str, Any]]:
+    raw = path.read_bytes()
+    guesses: list[dict[str, Any]] = []
+
+    for enc in candidate_encodings:
+        try:
+            text = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+
+        first_line = ""
+        for line in text.splitlines():
+            if line.strip():
+                first_line = line.strip()
+                break
+
+        guesses.append({"encoding": enc, "first_line": first_line})
+
+    return guesses
+
+
 def _write_report_json(report_path: str, payload: dict[str, Any]) -> None:
     text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     if report_path == "-":
@@ -128,6 +149,11 @@ def main() -> int:
         nargs="*",
         default=["cp950", "big5", "cp936", "shift_jis"],
         help="Encodings to try when converting (default: cp950 big5 cp936 shift_jis).",
+    )
+    parser.add_argument(
+        "--guess",
+        action="store_true",
+        help="For non-UTF-8 files, try decoding with --from encodings and print suggestions (no changes made).",
     )
     parser.add_argument("--no-backup", action="store_true", help="Do not write .bak backups when converting.")
     parser.add_argument(
@@ -193,21 +219,43 @@ def main() -> int:
         rel = r.path.relative_to(root)
         print(f"- {rel} ({r.error})")
 
+    guesses_by_file: dict[str, list[dict[str, Any]]] = {}
+    if args.guess:
+        print("\nEncoding guesses (from --from list):")
+        for r in bad:
+            rel = str(r.path.relative_to(root))
+            guesses = guess_encodings(r.path, candidate_encodings=args.from_encodings)
+            guesses_by_file[rel] = guesses
+            if not guesses:
+                print(f"- {rel}: (no candidates decoded cleanly)")
+                continue
+            best = guesses[0]
+            preview = best["first_line"]
+            if preview and len(preview) > 80:
+                preview = preview[:80] + "…"
+            if preview:
+                print(f"- {rel}: {best['encoding']} (first line: {preview})")
+            else:
+                print(f"- {rel}: {best['encoding']}")
+
     if not args.fix:
         if args.report_json:
+            payload: dict[str, Any] = {
+                "root": str(root),
+                "scanned": len(results),
+                "ok_utf8": len(results) - len(bad),
+                "not_utf8": len(bad),
+                "include": include,
+                "exclude": args.exclude,
+                "exclude_dirs": sorted(exclude_dirs),
+                "files": [{"path": str(r.path.relative_to(root)), "error": r.error} for r in bad],
+                "converted": {"attempted": 0, "ok": 0, "failed": 0, "from_encodings": args.from_encodings},
+            }
+            if args.guess:
+                payload["guesses"] = guesses_by_file
             _write_report_json(
                 args.report_json,
-                {
-                    "root": str(root),
-                    "scanned": len(results),
-                    "ok_utf8": len(results) - len(bad),
-                    "not_utf8": len(bad),
-                    "include": include,
-                    "exclude": args.exclude,
-                    "exclude_dirs": sorted(exclude_dirs),
-                    "files": [{"path": str(r.path.relative_to(root)), "error": r.error} for r in bad],
-                    "converted": {"attempted": 0, "ok": 0, "failed": 0, "from_encodings": args.from_encodings},
-                },
+                payload,
             )
         return 2
 

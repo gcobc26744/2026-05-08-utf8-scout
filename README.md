@@ -4,7 +4,7 @@
 `utf8_scout.py` is a tiny CLI that scans a folder for text files and reports which ones fail to decode as UTF-8 (a common cause of mojibake/garbled output in terminals).
 
 ## Why it exists
-I often hit “file looks fine in GitHub/VS Code but looks garbled in Terminal/PowerShell”. This project helps me quickly:
+I often hit: "file looks fine in GitHub/VS Code but looks garbled in Terminal/PowerShell". This project helps me quickly:
 - confirm whether a file is actually UTF-8
 - identify files that are likely Big5/CP950 (or other legacy encodings)
 - optionally convert them to UTF-8 safely (with backups)
@@ -43,6 +43,13 @@ Attempt safe conversion (creates `.bak` files first):
 python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/*.md --fix --from cp950 big5
 ```
 
+Try to guess the source encoding (no changes made):
+
+```bash
+python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/*.md --guess --from cp950 big5 cp936 shift_jis
+```
+
 ## Next steps
 - [ ] Detect BOM / UTF-16 files explicitly
-- [ ] Add an option to auto-suggest likely source encoding
+- [ ] Improve encoding guessing (confidence scoring)
+
