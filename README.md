@@ -12,9 +12,19 @@ I often hit: "file looks fine in GitHub/VS Code but looks garbled in Terminal/Po
 ## How to run
 Requirements: Python 3.10+
 
+### Option A: run from source
+
 ```bash
 cd projects/2026-05-08-utf8-scout
 python src/utf8_scout.py . --include **/*.md **/*.py **/*.txt
+```
+
+### Option B: install the CLI (editable)
+
+```bash
+cd projects/2026-05-08-utf8-scout
+python -m pip install -e .
+utf8-scout . --include **/*.md **/*.py **/*.txt
 ```
 
 ## Examples
@@ -52,4 +62,3 @@ python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/*.md --guess --fr
 ## Next steps
 - [ ] Detect BOM / UTF-16 files explicitly
 - [ ] Improve encoding guessing (confidence scoring)
-

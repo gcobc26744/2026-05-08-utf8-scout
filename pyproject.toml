@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "utf8-scout"
+version = "0.1.0"
+description = "Scan for files that are not valid UTF-8 and optionally convert them."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "utf8-scout contributors" }]
+keywords = ["utf-8", "encoding", "mojibake", "cli"]
+
+[project.scripts]
+utf8-scout = "utf8_scout:main"
+
+[tool.setuptools]
+py-modules = ["utf8_scout"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
