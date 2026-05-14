@@ -35,6 +35,12 @@ Scan a project folder:
 python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/*.md **/*.py
 ```
 
+Skip files that look like binary data (helpful if you include broad patterns):
+
+```bash
+python src/utf8_scout.py ..\\2026-05-04-csv-buddy --include **/* --skip-binary
+```
+
 Print a quick breakdown by extension:
 
 ```bash

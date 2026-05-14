@@ -2,6 +2,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 import utf8_scout
 
 
@@ -30,6 +34,28 @@ class TestUtf8Scout(unittest.TestCase):
         by_name = {r.path.name: r for r in results}
         self.assertTrue(by_name["ok.txt"].ok_utf8)
         self.assertFalse(by_name["bad.txt"].ok_utf8)
+
+    def test_scan_utf8_can_skip_probable_binary(self) -> None:
+        root = Path("C:/repo")
+        binfile = root / "file.bin"
+
+        def fake_read_bytes(p: Path) -> bytes:
+            if p == binfile:
+                return b"\x00\x01\x02\x03hello"
+            raise AssertionError(f"unexpected path: {p}")
+
+        with mock.patch.object(utf8_scout, "_iter_files", return_value=[binfile]):
+            with mock.patch.object(Path, "read_bytes", autospec=True, side_effect=fake_read_bytes):
+                results = utf8_scout.scan_utf8(
+                    root,
+                    include=["**/*.*"],
+                    exclude=[],
+                    exclude_dirs=set(),
+                    skip_binary=True,
+                )
+
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(results[0].ok_utf8)
 
     def test_try_convert_to_utf8_writes_backup_and_converts(self) -> None:
         p = Path("C:/repo/bad.txt")

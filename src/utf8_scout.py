@@ -16,7 +16,7 @@ DEFAULT_EXCLUDE_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".pytest
 @dataclass(frozen=True)
 class ScanResult:
     path: Path
-    ok_utf8: bool
+    ok_utf8: bool | None
     error: str | None
 
 
@@ -45,7 +45,31 @@ def _matches_any(path: Path, patterns: list[str]) -> bool:
     return False
 
 
-def scan_utf8(root: Path, include: list[str], exclude: list[str], exclude_dirs: set[str]) -> list[ScanResult]:
+def _is_probably_binary(data: bytes, *, sample_size: int = 4096, nontext_threshold: float = 0.30) -> bool:
+    sample = data[:sample_size]
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return True
+
+    nontext = 0
+    for b in sample:
+        # treat common whitespace and printable ASCII as text; count C0 controls + DEL as non-text
+        if b in (9, 10, 13) or 32 <= b <= 126 or b >= 128:
+            continue
+        nontext += 1
+
+    return (nontext / len(sample)) > nontext_threshold
+
+
+def scan_utf8(
+    root: Path,
+    include: list[str],
+    exclude: list[str],
+    exclude_dirs: set[str],
+    *,
+    skip_binary: bool = False,
+) -> list[ScanResult]:
     results: list[ScanResult] = []
     candidates = _iter_files(root, exclude_dirs=exclude_dirs)
 
@@ -62,6 +86,10 @@ def scan_utf8(root: Path, include: list[str], exclude: list[str], exclude_dirs: 
             data = file_path.read_bytes()
         except OSError as e:
             results.append(ScanResult(path=file_path, ok_utf8=False, error=f"read error: {e}"))
+            continue
+
+        if skip_binary and _is_probably_binary(data):
+            results.append(ScanResult(path=file_path, ok_utf8=None, error="skipped (looks like binary)"))
             continue
 
         try:
@@ -157,9 +185,14 @@ def main() -> int:
     )
     parser.add_argument("--no-backup", action="store_true", help="Do not write .bak backups when converting.")
     parser.add_argument(
+        "--skip-binary",
+        action="store_true",
+        help="Skip files that look like binary data (heuristic). Useful when scanning with broad include patterns.",
+    )
+    parser.add_argument(
         "--summary",
         action="store_true",
-        help="Print a per-extension summary table (total/ok/bad).",
+        help="Print a per-extension summary table (total/ok/bad/skipped).",
     )
     parser.add_argument(
         "--report-json",
@@ -172,29 +205,41 @@ def main() -> int:
     include = args.include if args.include is not None else DEFAULT_INCLUDE
     exclude_dirs = set(args.exclude_dir)
 
-    results = scan_utf8(root=root, include=include, exclude=args.exclude, exclude_dirs=exclude_dirs)
-    bad = [r for r in results if not r.ok_utf8]
+    results = scan_utf8(
+        root=root,
+        include=include,
+        exclude=args.exclude,
+        exclude_dirs=exclude_dirs,
+        skip_binary=args.skip_binary,
+    )
+    skipped = [r for r in results if r.ok_utf8 is None]
+    checked = [r for r in results if r.ok_utf8 is not None]
+    bad = [r for r in checked if r.ok_utf8 is False]
 
     print(f"Scanned: {len(results)} files")
-    print(f"UTF-8 OK: {len(results) - len(bad)}")
+    print(f"UTF-8 OK: {len([r for r in checked if r.ok_utf8 is True])}")
     print(f"Not UTF-8: {len(bad)}")
+    if skipped:
+        print(f"Skipped (binary): {len(skipped)}")
 
     if args.summary:
         summary: dict[str, dict[str, int]] = {}
         for r in results:
             ext = _ext_key(r.path)
-            bucket = summary.setdefault(ext, {"total": 0, "ok": 0, "bad": 0})
+            bucket = summary.setdefault(ext, {"total": 0, "ok": 0, "bad": 0, "skipped": 0})
             bucket["total"] += 1
-            if r.ok_utf8:
+            if r.ok_utf8 is None:
+                bucket["skipped"] += 1
+            elif r.ok_utf8:
                 bucket["ok"] += 1
             else:
                 bucket["bad"] += 1
 
         print("\nBy extension:")
-        print("ext\t total\t ok\t bad")
+        print("ext\t total\t ok\t bad\t skipped")
         for ext in sorted(summary.keys()):
             b = summary[ext]
-            print(f"{ext}\t {b['total']}\t {b['ok']}\t {b['bad']}")
+            print(f"{ext}\t {b['total']}\t {b['ok']}\t {b['bad']}\t {b['skipped']}")
 
     if not bad:
         if args.report_json:
@@ -203,11 +248,13 @@ def main() -> int:
                 {
                     "root": str(root),
                     "scanned": len(results),
-                    "ok_utf8": len(results) - len(bad),
+                    "ok_utf8": len([r for r in checked if r.ok_utf8 is True]),
                     "not_utf8": len(bad),
+                    "skipped_binary": len(skipped),
                     "include": include,
                     "exclude": args.exclude,
                     "exclude_dirs": sorted(exclude_dirs),
+                    "skip_binary": args.skip_binary,
                     "files": [],
                     "converted": {"attempted": 0, "ok": 0, "failed": 0, "from_encodings": args.from_encodings},
                 },
@@ -243,12 +290,15 @@ def main() -> int:
             payload: dict[str, Any] = {
                 "root": str(root),
                 "scanned": len(results),
-                "ok_utf8": len(results) - len(bad),
+                "ok_utf8": len([r for r in checked if r.ok_utf8 is True]),
                 "not_utf8": len(bad),
+                "skipped_binary": len(skipped),
                 "include": include,
                 "exclude": args.exclude,
                 "exclude_dirs": sorted(exclude_dirs),
+                "skip_binary": args.skip_binary,
                 "files": [{"path": str(r.path.relative_to(root)), "error": r.error} for r in bad],
+                "skipped_files": [{"path": str(r.path.relative_to(root)), "reason": r.error} for r in skipped],
                 "converted": {"attempted": 0, "ok": 0, "failed": 0, "from_encodings": args.from_encodings},
             }
             if args.guess:
@@ -280,12 +330,15 @@ def main() -> int:
             {
                 "root": str(root),
                 "scanned": len(results),
-                "ok_utf8": len(results) - len(bad),
+                "ok_utf8": len([r for r in checked if r.ok_utf8 is True]),
                 "not_utf8": len(bad),
+                "skipped_binary": len(skipped),
                 "include": include,
                 "exclude": args.exclude,
                 "exclude_dirs": sorted(exclude_dirs),
+                "skip_binary": args.skip_binary,
                 "files": [{"path": str(r.path.relative_to(root)), "error": r.error} for r in bad],
+                "skipped_files": [{"path": str(r.path.relative_to(root)), "reason": r.error} for r in skipped],
                 "converted": {
                     "attempted": len(bad),
                     "ok": converted,
